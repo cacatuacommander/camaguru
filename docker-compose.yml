@@ -32,6 +32,16 @@ services:
     networks:
       - backend
 
+  maildev:
+    image: maildev/maildev
+    container_name: camagru-maildev
+    restart: unless-stopped
+    ports:
+      - "1080:1080"   # web UI
+      - "1025:1025"   # SMTP port your app connects to
+    networks:
+      - backend
+
 volumes:
   db_data:
   uploads:

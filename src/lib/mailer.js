@@ -4,10 +4,13 @@ const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
   secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+  // maildev needs no auth — only include auth if credentials are actually set
+  ...(process.env.SMTP_USER && {
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  }),
 });
 
 async function sendConfirmationEmail(to, token) {
