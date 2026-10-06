@@ -1,48 +1,96 @@
 'use strict';
+const zlib = require('zlib');
+const fs = require('fs');
 
-function readChunck(newOffset, buf)
+function readChunck(offset, buf)
 {
-	//check that the buffer is not too short and that it contains the length at least non so se è necesssario 
-	if (buf.length < newOffset + 4)
+	//check that the buffer is not too short and that it contains the length at least
+	if (buf.length < offset + 4)
 	{
 		throw new Error("Invalid or corrupted PNG");
 	}
 
 	//extracting chunk length wich is the length of the chunk data field in this chunk
-	const len = buf.readUInt32BE(newOffset);
+	const len = buf.readUInt32BE(offset);
 	console.log(`chunklen: ${len}`);
 
-	//check that i can do only after i have the len of the data in the buffer it checks the buffer is at least long enough to contain chunck len chunck type chunk data and CRC non so se è necesssario 
-	if (buf.length < newOffset + 12 + len)
+	//check that i can do only after i have the len of the data in the buffer it checks the buffer is at least long enough to contain chunck len chunck type chunk data and CRC
+	if (buf.length < offset + 12 + len)
 	{
 		throw new Error("Invalid or corrupted PNG");
 	}
 
-	//chunk length is always 4 byte so after reading it i increase newOffset by 4
-	newOffset += 4;
-
 	//extracting chunk type
-	const type = buf.toString('ascii', newOffset, newOffset + 4)
+	const type = buf.toString('ascii', offset + 4, offset + 8)
 	console.log(`buf type: ${type}`);
 
-	//chunk type is always 4 byte so after reading it i increase newOffset by 4
-	newOffset += 4;
-
 	//extraction chunk data
-	const data = buf.subarray(newOffset, newOffset + len);
+	const data = buf.subarray(offset + 8, offset + 8 + len);
 
-	newOffset += len;
+	//check CRC signature
+	const computed = zlib.crc32(buf.subarray(offset + 4, offset + 8 + len));
+	const stored = buf.readUInt32BE(offset + 8 + len);
+	if (computed !== stored)
+		throw new Error("Invalid or corrupted PNG");
 
-	//to-do check CRC signature ???
-	newOffset += 4;
-	return ({ chunk : {len, type, data}, newOffset: newOffset});
+	return ({ chunk : {len, type, data}, newOffset: offset + 12 + len});
 }
 
+function paeth(a, b, c)
+{
+	const p = a + b - c;
+	const pa = Math.abs(p - a);
+	const pb = Math.abs(p - b);
+	const pc = Math.abs(p - c);
+
+	if (pa <= pb && pa <= pc)
+		return a;
+	if (pb <= pc)
+		return b;
+	return c;
+}
+
+function unfilter(rawScanlines, width, height, bytesPerPixel)
+{
+	const stride = width * bytesPerPixel;       // pixel bytes in one row
+	const pixels = Buffer.alloc(height * stride);
+
+	for (let y = 0; y < height; y++)
+	{
+		const inRow = y * (stride + 1);          // where this row starts in the inflated data
+		const filterType = rawScanlines[inRow];
+		const outRow = y * stride;               // where this row starts in the output
+		const prevRow = outRow - stride;         // only used when y > 0
+
+		for (let x = 0; x < stride; x++)
+		{
+			const raw = rawScanlines[inRow + 1 + x];
+
+			// neighbors come from the OUTPUT (already reconstructed), 0 outside the image
+			const a = x >= bytesPerPixel ? pixels[outRow + x - bytesPerPixel] : 0;
+			const b = y > 0 ? pixels[prevRow + x] : 0;
+			const c = (x >= bytesPerPixel && y > 0) ? pixels[prevRow + x - bytesPerPixel] : 0;
+
+			let value;
+			switch (filterType)
+			{
+				case 0: value = raw; break;
+				case 1: value = raw + a; break;
+				case 2: value = raw + b; break;
+				case 3: value = raw + Math.floor((a + b) / 2); break;
+				case 4: value = raw + paeth(a, b, c); break;
+				default: throw new Error(`invalid PNG: unknown filter type ${filterType} in row ${y}`);
+			}
+			pixels[outRow + x] = value & 0xFF;
+		}
+	}
+	return pixels;
+}
+*.sh text eol=lf
 function main()
 {
-	const fs = require('fs')
-	const buf = fs.readFileSync('./pixil-frame-0.png')
-	const buf2 = fs.readFileSync('./output-onlinepngtools2.png')
+	const buf2 = fs.readFileSync('./pixil-frame-00.png');
+	const buf = fs.readFileSync('./output-onlinepngtools2.png');
 
 	const pngSignature = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
 
@@ -56,26 +104,29 @@ function main()
 
 	let offset = 8;
 
-	//first i handle the first chunk that must be of type IHDR 
-	const {chunk, newOffset} = readChunck(offset, buf);
-	offset = newOffset;
+	//first i handle the first chunk that must be of type IHDR
+	const { chunk: firstChunk, newOffset: afterIhdr } = readChunck(offset, buf);
+	offset = afterIhdr;
 
-	if (!(chunk.type == "IHDR" && chunk.len == 13))
-		console.log("PNG IS INVALID!!!")//to-do make better error and exit in in this case
+	if (!(firstChunk.type == "IHDR" && firstChunk.len == 13))
+	{
+		console.error("Invalid or corrupted PNG");
+		process.exit(1);
+	}
 
 	console.log(`offset: ${offset}`);
 
-	const imgWidth = chunk.data.readUInt32BE(0);
-	const imgHeight = chunk.data.readUInt32BE(4);
-	const bitDepth = chunk.data.readUInt8(8);
-	const colorType = chunk.data.readUInt8(9);
-	const compressionMethod = chunk.data.readUInt8(10);
-	const filterMethod = chunk.data.readUInt8(11)
-	const InterlaceMethod = chunk.data.readUInt8(12);
+	const imgWidth = firstChunk.data.readUInt32BE(0);
+	const imgHeight = firstChunk.data.readUInt32BE(4);
+	const bitDepth = firstChunk.data.readUInt8(8);
+	const colorType = firstChunk.data.readUInt8(9);
+	const compressionMethod = firstChunk.data.readUInt8(10);
+	const filterMethod = firstChunk.data.readUInt8(11)
+	const InterlaceMethod = firstChunk.data.readUInt8(12);
 
 	if (imgWidth <= 0 || imgHeight <= 0)
 	{
-		console.error("Invalid or corrupted PNG") 
+		console.error("Invalid or corrupted PNG")
 		process.exit(1);
 	}
 
@@ -94,10 +145,10 @@ function main()
 
 
 	//now a while loop to iterate the folowing chunks wich will mostly be IDAT chunks because i dont't handle chunks of ancillary type
-	let pixelData = Buffer.alloc(0);
 	let onlyConsecutiveIdat = 0;
 	let foundIendChunk = false;
 
+	const idatParts = [];
 	while(offset < buf.length && foundIendChunk == false) //not sure about this condition
 	{
 		const {chunk, newOffset} = readChunck(offset, buf);
@@ -112,7 +163,7 @@ function main()
 				console.error("Invalid or corrupted PNG")
 				process.exit(1);
 			}
-			pixelData = Buffer.concat([pixelData, chunk.data]);
+			idatParts.push(chunk.data);
 		}
 		else
 		{
@@ -132,7 +183,33 @@ function main()
 		process.exit(1);
 	}
 
-	console.log(`final offset: ${offset}, pixelData length: ${pixelData.length}`);
+	const compressedPixelData = Buffer.concat(idatParts);
+
+	console.log(`final offset: ${offset}, compressedPixelData length: ${compressedPixelData.length}`);
+
+	const rawScanLines = zlib.inflateSync(compressedPixelData);
+
+	const bytesPerPixel = (colorType == 6) ? 4 : 3;
+
+	const expectedLength = imgHeight * (1 + imgWidth * bytesPerPixel);
+
+	if (expectedLength != rawScanLines.length)
+		throw new Error("invalid PNG unexpected PixelData length");
+	else
+		console.log("PixelData length as expected: " + rawScanLines.length);
+
+	const pixels = unfilter(rawScanLines, imgWidth, imgHeight, bytesPerPixel);
+
+	// debug: only sensible for tiny images
+	for (let y = 0; y < imgHeight; y++)
+	{
+		for (let x = 0; x < imgWidth; x++)
+		{
+			const i = (y * imgWidth + x) * bytesPerPixel;
+			console.log(`(${x},${y}): ${[...pixels.subarray(i, i + bytesPerPixel)]}`);
+		}
+	}
+
 }
 
 try { main(); }
