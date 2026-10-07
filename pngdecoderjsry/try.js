@@ -132,13 +132,13 @@ function main()
 
 	if (!(bitDepth == 8 && (colorType == 2 || colorType == 6)))
 	{
-		console.error("Unsupported PNG") //to-do make a proper error and exit in that case
+		console.error("Unsupported PNG")
 		process.exit(1);
 	}
 
 	if (compressionMethod != 0 || filterMethod != 0 || InterlaceMethod != 0)
 	{
-		console.error("Unsupported PNG") //to-do make a proper error and exit in that case
+		console.error("Unsupported PNG")
 		process.exit(1);
 	}
 	console.log(`imgWidth:  ${imgWidth}, imgHeight: ${imgHeight}, bitDepth: ${bitDepth}, colorType: ${colorType}, InterlaceMethod: ${InterlaceMethod}`);
@@ -171,7 +171,7 @@ function main()
 				onlyConsecutiveIdat = 2;
 		}
 
-		if (chunk.type == "IEND")//check there is only one chunk of type IEND(done) and it is at the end(to-do?)or i just consider as junk anthing that comes after
+		if (chunk.type == "IEND")//check there is only one chunk of type IEND
 		{
 			foundIendChunk = true;
 		}
